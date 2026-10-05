@@ -59,9 +59,12 @@ class GarminClient:
           self.garthClient.configure(domain="garmin.cn")
           self.garthClient.client.sess.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         self.garthClient.login(self.email, self.password)
-        
-        # del self.garthClient.sess.headers['User-Agent']
-        del self.garthClient.client.sess.headers['User-Agent']
+
+        ## 删掉临时的浏览器 UA（connectapi 走自己的 UA），没有就跳过
+        try:
+            del self.garthClient.client.sess.headers['User-Agent']
+        except Exception:
+            pass
 
       return func(self, *args, **kwargs)
     return ware

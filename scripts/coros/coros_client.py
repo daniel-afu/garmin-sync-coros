@@ -8,6 +8,9 @@ import certifi
 from coros.region_config import REGIONCONFIG
 from coros.sts_config import STS_CONFIG
 
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+
 class CorosClient:
     
     def __init__(self, email, password) -> None:
@@ -87,7 +90,57 @@ class CorosClient:
           else:
              return False
         except Exception as err:
-            exit() 
+            ## 不要 exit()（退出码 0 会让 Actions 变成假绿勾），把错误抛出去
+            raise CorosActivityUploadError("高驰上传通知接口异常：" + str(err))
+
+    ## 直传运动，见 garmin_sync_coros.py 的说明
+    def importFit(self, fit_bytes, filename, timezone=32):
+        """把 FIT 文件直接 POST 给高驰，返回 (是否成功, 说明文字)。
+
+        高驰在 2026-10-03 关闭了取 OSS 临时凭证的免鉴权通道，老链路
+        「先传 OSS，再通知 /activity/fit/import 去取」整体失效。
+        实测 /activity/fit/import 本身就支持 multipart 直接收 FIT：
+            - jsonParameter = {"source":1,"timezone":32}
+            - sportData     = 文件本体
+        这样就不用再碰 OSS/STS 了。
+        """
+        if self.accessToken == None:
+            self.login()
+
+        hostname = REGIONCONFIG[self.regionId]["hostname"]
+        url = f"{self.teamapi}/activity/fit/import"
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": BROWSER_UA,
+            "Referer": hostname + "/",
+            "Origin": hostname,
+            "accesstoken": self.accessToken,
+        }
+        fields = {
+            "jsonParameter": json.dumps({"source": 1, "timezone": timezone}),
+            "sportData": (filename, fit_bytes, "application/octet-stream"),
+        }
+        try:
+            response = self.req.request(
+                method='POST',
+                url=url,
+                fields=fields,
+                headers=headers,
+                timeout=300.0,
+            )
+        except Exception as err:
+            return False, "请求异常：" + str(err)
+
+        text = response.data.decode("utf-8", "replace")
+        try:
+            result = json.loads(text)
+        except Exception:
+            return False, "HTTP %s 响应非 JSON：%s" % (response.status, text[:200])
+
+        if result.get("result") == "0000" or result.get("apiCode") == "8E16FCC7":
+            return True, "已受理（异步入库，labelId=%s）" % (result.get("labelId"),)
+        return False, "HTTP %s result=%s message=%s" % (
+            response.status, result.get("result"), result.get("message"))
 
     def getActivities(self, size:int, page:int):
         self.checkToken()
@@ -105,7 +158,8 @@ class CorosClient:
           response = json.loads(response.data)
           return response
         except Exception as err:
-            exit() 
+            ## 同样不要 exit()，否则查询失败也会变成假绿勾
+            raise CorosApiError("高驰活动列表接口异常：" + str(err))
      ## 获取所有运动
     def getAllActivities(self): 
       all_activities = []
@@ -113,10 +167,13 @@ class CorosClient:
       page = 1
       while(True):
         activities = self.getActivities(size, page)
-        totalPage = activities['data']['totalPage']
-        if totalPage >= page:
-          all_activities.extend(activities['data']['dataList'])
-        else:
+        data = (activities or {}).get("data") or {}
+        data_list = data.get("dataList") or []
+        if not data_list:
+          return all_activities
+        all_activities.extend(data_list)
+        total_page = data.get("totalPage") or 0
+        if page >= total_page:
           return all_activities
         page += 1
     
@@ -152,6 +209,14 @@ class CorosLoginError(Exception):
     def __init__(self, status):
         """Initialize."""
         super(CorosLoginError, self).__init__(status)
+        self.status = status
+
+
+class CorosApiError(Exception):
+
+    def __init__(self, status):
+        """Initialize."""
+        super(CorosApiError, self).__init__(status)
         self.status = status
 
 class CorosActivityUploadError(Exception):

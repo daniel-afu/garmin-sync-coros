@@ -1,4 +1,19 @@
-# 如果出现无法同步请检查下代码是否最新如果非最新请重新fork sync代码后删除db/garmin.db文件重跑一遍！！！
+## 同步原理（2026-10-05 起已改为「直传 FIT」）
+
+高驰在 2026-10-03 关闭了取 OSS 临时凭证的免鉴权通道，老的
+「佳明下载 FIT → 上传阿里云 OSS → 通知高驰去 OSS 拉取导入」链路整体失效。
+现在改成把 FIT 文件直接 POST 给 `https://teamcnapi.coros.com/activity/fit/import`，
+完全绕开 OSS / STS。
+
+同时修掉了两个坑：
+
+- 旧代码在出错时 `except: exit()`（退出码 0），GitHub Actions 会显示绿勾，属于「假成功」。
+  现在有失败会以非 0 退出码结束，绿勾就是真的绿。
+- 不再依赖仓库里的 `db/*.db` 去重（Actions 每次都是干净环境，db 也不会被提交）。
+  改为拉取高驰已有活动的开始时间做比对，佳明里有、高驰里没有的才上传。
+
+`SYNC_DAYS` 控制只同步最近多少天内的活动（默认 30，填 `0` 表示不限）。
+
 ## 致谢
 - 本脚本佳明模块代码来自@[yihong0618](https://github.com/yihong0618) 的 [running_page](https://github.com/yihong0618/running_page) 个人跑步主页项目,在此非常感谢@[yihong0618](https://github.com/yihong0618)大佬的无私奉献！！！
 
@@ -42,6 +57,7 @@ COROS to Garmin sync behavior.
 |  GARMIN_PASSWORD   |            佳明登录密码            |                    |
 | GARMIN_AUTH_DOMAIN | 佳明区域（国际区填:COM 国区填:CN） |    (COM or CN)     |
 | GARMIN_NEWEST_NUM  |            最新记录条数            | (默认0，可写大于0) |
+|     SYNC_DAYS      | 只同步最近多少天内的活动(0=不限)   |     (默认30)       |
 |    COROS_EMAIL     |           高驰 登录邮箱            |                    |
 |   COROS_PASSWORD   |             高驰 密码              |                    |
 
